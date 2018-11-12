@@ -5,7 +5,7 @@ const ARTIFACTS_DIR = 'artifacts'
 
 const ALL_SLASHES = /\//g
 
-const makeGenScreenshotPath = (subDir) => {
+const makeGenScreenshotPath = subDir => {
   const dir = ARTIFACTS_DIR + '/' + subDir + '/'
 
   if (!fs.existsSync(dir)) {
@@ -18,10 +18,29 @@ const makeGenScreenshotPath = (subDir) => {
   })
 }
 
-const makeGenNewRelicPage = (accountId, applicationId, start, end) => (page = '') =>
+const makeGenNewRelicPage = (accountId, applicationId, start, end) => (
+  page = ''
+) =>
   `https://rpm.newrelic.com/accounts/${accountId}/applications/${applicationId}${page}?tw%5Bend%5D=${end}&tw%5Bstart%5D=${start}`
 
 const toTimestamp = dateStr => Math.floor(new Date(dateStr) / 1000)
+
+const takeScreenshotIfExist = async (page, genScreenshotPath, text) => {
+  const links = await page.$x(`//a[contains(text(), '${text}')]`)
+
+  if (!links.length) {
+    return
+  }
+
+  console.warn(`Taking a screenshot of page: ${text}`)
+
+  await Promise.all([
+    page.waitForNavigation({ timeout: 5000 }),
+    links[0].click()
+  ])
+
+  await page.screenshot(genScreenshotPath(text))
+}
 
 const run = async ({ accountId, applicationId, start, end }) => {
   const genRelicPage = makeGenNewRelicPage(
@@ -34,7 +53,9 @@ const run = async ({ accountId, applicationId, start, end }) => {
   const genScreenshotPath = makeGenScreenshotPath(subDir)
   const overviewPage = genRelicPage()
 
-  console.warn(`Visiting NR accountId = ${accountId}, applicationId = ${applicationId}, start = ${start}, end = ${end}`)
+  console.warn(
+    `Visiting NR accountId = ${accountId}, applicationId = ${applicationId}, start = ${start}, end = ${end}`
+  )
   console.warn(overviewPage)
 
   const browser = await puppeteer.connect({
@@ -56,12 +77,14 @@ const run = async ({ accountId, applicationId, start, end }) => {
 
   const page = pages[0]
 
-  await page.goto(overviewPage)
-  await page.screenshot(genScreenshotPath('overview'))
+  await takeScreenshotIfExist(page, genScreenshotPath, 'Overview')
+  await takeScreenshotIfExist(page, genScreenshotPath, 'Go runtime')
+  await takeScreenshotIfExist(page, genScreenshotPath, 'Solr caches')
+  await takeScreenshotIfExist(page, genScreenshotPath, 'Solr updates')
+  await takeScreenshotIfExist(page, genScreenshotPath, 'JVMs')
+  await takeScreenshotIfExist(page, genScreenshotPath, 'Errors')
 
-  const transactionPage = genRelicPage('/transactions')
-  await page.goto(transactionPage)
-  await page.screenshot(genScreenshotPath('transactions'))
+  await takeScreenshotIfExist(page, genScreenshotPath, 'Transactions')
 
   const transactionCount = await page.$$eval(
     '.app_tier_alone',
@@ -79,15 +102,11 @@ const run = async ({ accountId, applicationId, start, end }) => {
     const transactionName = await page.$eval(
       'h2.section.with_corner_button',
       element => {
-        const ALL_LINE_BREAKS_AT_BEGINNING_AND_ENDING = /^\s+|\s+$/g
-        return element.textContent.replace(
-          ALL_LINE_BREAKS_AT_BEGINNING_AND_ENDING,
-          ''
-        )
+        return element.textContent.replace(/^\s+|\s+$/g, '')
       }
     )
 
-    console.warn(`Taking a screenshot of ${transactionName}`)
+    console.warn(`> Taking a screenshot of ${transactionName}`)
     await page.screenshot(genScreenshotPath('transactions' + transactionName))
   }
 
