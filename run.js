@@ -5,15 +5,21 @@ const ARTIFACTS_DIR = 'artifacts'
 
 const ALL_SLASHES = /\//g
 
-const makeGenScreenshotPath = subDir => {
-  const dir = ARTIFACTS_DIR + '/' + subDir + '/'
+const UNTIL_NETWORK_IDLE = { waitUntil: 'networkidle0', timeout: 15000 }
 
+const makeGenScreenshotPath = ({ applicationName, start, end }) => {
+  const dir = ARTIFACTS_DIR + '/' + start + ' > ' + end
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir)
   }
 
+  const subDir = dir + '/' + applicationName + '/'
+  if (!fs.existsSync(subDir)) {
+    fs.mkdirSync(subDir)
+  }
+
   return name => ({
-    path: dir + name.replace(ALL_SLASHES, '.') + '.png',
+    path: subDir + name.replace(ALL_SLASHES, '.') + '.png',
     fullPage: true
   })
 }
@@ -35,40 +41,56 @@ const takeScreenshotIfExist = async (page, genScreenshotPath, text) => {
   console.warn(`Taking a screenshot of page: ${text}`)
 
   await Promise.all([
-    page.waitForNavigation({ timeout: 5000 }),
+    page.waitForNavigation(UNTIL_NETWORK_IDLE),
     links[0].click()
   ])
 
   await page.screenshot(genScreenshotPath(text))
 }
 
-const run = async ({ accountId, applicationId, start, end }) => {
+const run = async ({
+  accountId,
+  applicationId,
+  applicationName,
+  start,
+  end
+}) => {
   const genRelicPage = makeGenNewRelicPage(
     accountId,
     applicationId,
     toTimestamp(start),
     toTimestamp(end)
   )
-  const subDir = [accountId, applicationId, start, end].join(' > ')
-  const genScreenshotPath = makeGenScreenshotPath(subDir)
+  const genScreenshotPath = makeGenScreenshotPath({
+    applicationName,
+    start,
+    end
+  })
   const overviewPage = genRelicPage()
 
   console.warn(
-    `Visiting NR accountId = ${accountId}, applicationId = ${applicationId}, start = ${start}, end = ${end}`
+    `Visiting NR accountId = ${accountId}, applicationId = ${applicationId} (${applicationName}), start = ${start}, end = ${end}`
   )
   console.warn(overviewPage)
 
-  const browser = await puppeteer.connect({
-    /**
-     * Start your Chrome in debugging mode, and get ws endpoint
-     * "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary" --remote-debugging-port=9222
-     */
-    browserWSEndpoint: process.env.WS_ENDPOINT,
-    defaultViewport: {
-      width: 1280,
-      height: 960
-    }
-  })
+  let browser
+  try {
+    browser = await puppeteer.connect({
+      /**
+       * Start your Chrome in debugging mode, and get ws endpoint
+       * "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary" --remote-debugging-port=9222
+       */
+      browserWSEndpoint: process.env.WS_ENDPOINT,
+      defaultViewport: {
+        width: 1280,
+        height: 960
+      }
+    })
+  } catch (error) {
+    console.warn(`Can't connect to your browser: ${error.message}`)
+    process.exit(1)
+  }
+
   const pages = await browser.pages()
 
   if (!pages.length) {
@@ -76,6 +98,8 @@ const run = async ({ accountId, applicationId, start, end }) => {
   }
 
   const page = pages[0]
+
+  await page.goto(overviewPage)
 
   await takeScreenshotIfExist(page, genScreenshotPath, 'Overview')
   await takeScreenshotIfExist(page, genScreenshotPath, 'Go runtime')
@@ -96,7 +120,7 @@ const run = async ({ accountId, applicationId, start, end }) => {
 
     await Promise.all([
       page.click(`.app_tier_alone:nth-child(${index + 1}) a`),
-      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 10000 })
+      page.waitForNavigation(UNTIL_NETWORK_IDLE)
     ])
 
     const transactionName = await page.$eval(
